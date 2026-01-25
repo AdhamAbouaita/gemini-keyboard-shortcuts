@@ -154,6 +154,7 @@
     let url = new URL(window.location.href);
     let params = new URLSearchParams(url.search);
     let query = unescape(params.get('q') || '');
+    let modelParam = params.get('model') || params.get('m');
 
     window.onload = onLoad;
 
@@ -176,20 +177,46 @@
         // Ensure "Show more" expanded & support ?q=
         let showMoreClicked = false;
         let inputBarClicked = false;
+        let modelSwitchHandled = false;
         const initialObserver = new MutationObserver(() => {
             const showMore = document.querySelector(CFG.selectors.showMoreButton);
             const inputBar = document.querySelector(CFG.selectors.textInputField);
             const textInput = document.querySelector(CFG.selectors.enterPrompt);
 
+            // 1. Expand "Show more"
             if (showMore && !showMoreClicked) {
                 showMoreClicked = true;
                 simulateClick(showMore);
+            }
+
+            // 2. Handle Model Switch
+            // We do NOT couple this with showMore. We wait specifically for the switcher.
+            if (modelParam && !modelSwitchHandled) {
+                const modelNum = parseInt(modelParam, 10);
+                if (!isNaN(modelNum) && modelNum >= 1 && modelNum <= 3) {
+                    const switcher = document.querySelector(CFG.selectors.modelSwitcherButton);
+                    if (switcher) {
+                        notify(`Switching to Model ${modelNum}...`);
+                        switchModel(modelNum);
+                        modelSwitchHandled = true;
+                    }
+                } else {
+                    // Invalid model param, ignore it so we don't get stuck
+                    modelSwitchHandled = true;
+                }
+            }
+
+            // 3. Handle Query Input (Wait for Model Switch first!)
+            if (modelParam && !modelSwitchHandled) {
+                // If we are supposed to switch models but haven't yet, DO NOT type query.
+                return;
             }
 
             if (hasQuery && inputBar && !inputBarClicked) {
                 if (textInput) {
                     inputBarClicked = true;
                     params.delete('q');
+                    if (modelParam) params.delete('model'), params.delete('m');
                     window.history.pushState(null, '', url.origin + url.pathname);
 
                     setTimeout(() => {
@@ -221,12 +248,21 @@
                         }, rapidClickDelayMS);
                     }, rapidClickDelayMS);
                 }
-            } else if (inputBar && !inputBarClicked) {
+            } else if (!hasQuery && inputBar && !inputBarClicked) {
+                // No query, just focus input (low priority)
+                // NOTE: We used to disconnect here, but we should make sure model switch is done too
                 inputBarClicked = true;
                 setTimeout(() => inputBar.click(), rapidClickDelayMS);
             }
 
-            if (showMoreClicked && inputBarClicked) initialObserver.disconnect();
+            // Disconnect Logic
+            const modelDone = !modelParam || modelSwitchHandled;
+            const queryDone = !hasQuery || inputBarClicked;
+            // We use a loose check for showMore since it's not critical
+
+            if (modelDone && queryDone && showMoreClicked) {
+                initialObserver.disconnect();
+            }
         });
         initialObserver.observe(document.body, { childList: true, subtree: true });
 
@@ -297,7 +333,13 @@
             }, tLeft);
         }
 
-        function simulateClick(el) { if (el) el.click(); else throw new Error('Element not found for click().'); }
+        function simulateClick(el) {
+            if (!el) throw new Error('Element not found for click().');
+            const opts = { bubbles: true, cancelable: true, view: window };
+            el.dispatchEvent(new MouseEvent('mousedown', opts));
+            el.dispatchEvent(new MouseEvent('mouseup', opts));
+            el.click(); // Standard click usually suffices if mouse events are fired, but some need specific 'click' event dispatch too.
+        }
 
         // ====== Drafts ======
         let draftIndex = 0;
@@ -379,19 +421,30 @@
             const switcher = document.querySelector(CFG.selectors.modelSwitcherButton);
             if (!switcher) { notify('Model switcher button not found.'); return; }
             simulateClick(switcher);
-            setTimeout(() => {
-                const panel = document.body.querySelector(CFG.selectors.modelMenuPanel);
-                const content = panel ? panel.querySelector(CFG.selectors.modelMenuContent) : null;
-                const buttons = content ? content.querySelectorAll(CFG.selectors.modelMenuItem) : null;
-                if (buttons && buttons.length && modelIndex >= 0 && modelIndex < buttons.length) {
-                    const btn = buttons[modelIndex];
-                    const name = (btn.textContent || '').trim().replace(/\s+/g, ' ') || `Model ${modelNumber}`;
-                    simulateClick(btn);
-                    notify(`Switched to ${name}`);
-                } else {
-                    notify(`Model number ${modelNumber} is invalid or not available.`);
-                }
-            }, 10);
+
+            // Wait for the menu panel to appear and be populated
+            waitForElement(CFG.selectors.modelMenuPanel, (panel) => {
+                // Even if panel exists, content might be rendering. Wait for items.
+                waitForElement(CFG.selectors.modelMenuItem, () => {
+                    const content = panel.querySelector(CFG.selectors.modelMenuContent);
+                    const buttons = content ? content.querySelectorAll(CFG.selectors.modelMenuItem) : null;
+
+                    if (buttons && buttons.length && modelIndex >= 0 && modelIndex < buttons.length) {
+                        const btn = buttons[modelIndex];
+                        const name = (btn.textContent || '').trim().replace(/\s+/g, ' ') || `Model ${modelNumber}`;
+
+                        // Add small delay to ensure listeners are ready
+                        setTimeout(() => {
+                            simulateClick(btn);
+                            notify(`Switched to ${name}`);
+                        }, 150);
+                    } else {
+                        // Close menu if invalid
+                        document.body.click();
+                        notify(`Model number ${modelNumber} is invalid or not available.`);
+                    }
+                }, 2000); // 2s timeout to find items
+            }, 2000); // 2s timeout to find panel
         }
 
         // ====== Sidebar Toggle ======
