@@ -69,7 +69,7 @@
             el.click();
         }
 
-        let lastToggledModel = 3;
+        let lastToggledModel = 1;
 
         function switchModel(modelNumber) {
             const modelIndex = modelNumber - 1;
