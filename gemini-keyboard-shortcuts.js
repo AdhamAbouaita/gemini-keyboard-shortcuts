@@ -96,7 +96,7 @@
             el.click(); // Standard click usually suffices if mouse events are fired, but some need specific 'click' event dispatch too.
         }
 
-        let lastToggledModel = 1; // Start assuming we might want to go to 1, or default state.
+        let lastToggledModel = 2; // Start assuming we might want to go to 1, or default state.
 
         // ====== Model Switching ======
         function switchModel(modelNumber) {
